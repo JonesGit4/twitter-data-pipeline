@@ -24,17 +24,17 @@ import httpx
 # ============================================================
 
 CONFIG = {
-    "twitterapi_key": os.getenv("TWITTERAPI_IO_KEY", ""),
+    "twitterapi_key": os.getenv("TWITTERAPI_IO_KEY", "new1_6deba88d9fa94d4d9e01d6fca78fe035"),
     "output_dir": os.path.expanduser("~/.hermes/data/twitter"),
-    "woeid_sao_paulo": 455827,
-    "woeid_new_york": 2459115,
+    "woeid_global": 1,
+    "woeid_brazil": 455827,
     "monitor_users": [
+        "FlavioBolsonaro",
         "elonmusk",
-        "naval",
-        # Adicione @users aqui
     ],
-    "max_tweets_per_user": 10,
+    "max_tweets_per_user": 5,
     "max_trends": 5,
+    "rate_limit_delay": 6.0,  # free tier: 1 req / 5s
 }
 
 # ============================================================
@@ -81,12 +81,17 @@ class TwitterAPIIO:
             timeout=30.0,
         )
     
-    async def get_trends(self) -> list[dict]:
-        """GET /twitter/trends — retorna trending topics"""
-        r = await self.client.get(f"{self.BASE}/trends")
+    async def get_trends(self, woeid: int = 1) -> list[dict]:
+        """GET /twitter/trends?woeid= — retorna trending topics (1=global, 455827=SP)"""
+        r = await self.client.get(
+            f"{self.BASE}/trends",
+            params={"woeid": woeid}
+        )
         r.raise_for_status()
         data = r.json()
-        return data if isinstance(data, list) else data.get("trends", [])
+        raw_trends = data.get("trends", [])
+        # Formato: [{"trend": {"name": "...", "rank": 1, "target": {"query": "..."}}}]
+        return [t["trend"] for t in raw_trends if "trend" in t]
     
     async def get_user_info(self, username: str) -> dict:
         """GET /twitter/user/info?userName=username"""
@@ -95,7 +100,9 @@ class TwitterAPIIO:
             params={"userName": username}
         )
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+        # Formato: {"status": "success", "data": {"id": "...", "name": "...", "followers": ...}}
+        return data.get("data", data)
     
     async def get_user_tweets(self, username: str, max_tweets: int = 10) -> list[dict]:
         """GET /twitter/user/last_tweets?userName=username"""
@@ -105,12 +112,10 @@ class TwitterAPIIO:
         )
         r.raise_for_status()
         data = r.json()
-        if isinstance(data, list):
-            return data[:max_tweets]
-        tweets = data.get("tweets", data.get("data", []))
-        if isinstance(tweets, list):
-            return tweets[:max_tweets]
-        return []
+        # Formato: {"status": "success", "data": {"tweets": [{...}, ...]}}
+        inner = data.get("data", data)
+        tweets = inner.get("tweets", []) if isinstance(inner, dict) else []
+        return tweets[:max_tweets]
     
     async def advanced_search(self, query: str, limit: int = 10) -> list[dict]:
         """GET /twitter/tweet/advanced_search"""
@@ -133,41 +138,41 @@ class TwitterAPIIO:
 # ============================================================
 
 def extract_trends(raw: list[dict], max_items: int = 5) -> list[dict]:
-    """Extrai trending topics relevantes"""
+    """Extrai trending topics relevantes — campos reais do twitterapi.io"""
     result = []
     for t in raw[:max_items]:
         result.append({
-            "name": t.get("name", t.get("trend_name", "?")),
-            "tweet_volume": t.get("tweet_volume", t.get("volume", 0)),
-            "url": t.get("url", ""),
-            "query": t.get("query", ""),
-            "category": t.get("category", ""),
+            "name": t.get("name", "?"),
+            "rank": t.get("rank", 0),
+            "query": t.get("target", {}).get("query", "") if isinstance(t.get("target"), dict) else "",
         })
     return result
 
 
 def extract_user_snapshot(username: str, info: dict, tweets: list[dict]) -> dict:
-    """Snapshot diário de um @user"""
+    """Snapshot diário de um @user — campos reais do twitterapi.io"""
     latest_tweets = []
     for t in tweets[:10]:
         latest_tweets.append({
-            "id": t.get("id", t.get("tweet_id", "")),
-            "text": (t.get("text", t.get("content", "")) or "")[:200],
-            "likes": t.get("likeCount", t.get("favorite_count", 0)),
-            "retweets": t.get("retweetCount", t.get("retweet_count", 0)),
-            "replies": t.get("replyCount", t.get("reply_count", 0)),
-            "views": t.get("viewCount", t.get("view_count", 0)),
-            "created_at": t.get("createdAt", t.get("created_at", "")),
-            "url": f"https://x.com/{username}/status/{t.get('id', t.get('tweet_id', ''))}",
+            "id": t.get("id", ""),
+            "text": (t.get("text", "") or "")[:200],
+            "likes": t.get("likeCount", 0),
+            "retweets": t.get("retweetCount", 0),
+            "replies": t.get("replyCount", 0),
+            "views": t.get("viewCount", 0),
+            "created_at": t.get("createdAt", ""),
+            "url": t.get("url", f"https://x.com/{username}/status/{t.get('id', '')}"),
         })
     
     return {
         "username": username,
-        "display_name": info.get("name", info.get("display_name", username)),
-        "followers": info.get("followers", info.get("followers_count", 0)),
-        "following": info.get("following", info.get("friends_count", 0)),
-        "tweets_count": info.get("tweetsCount", info.get("statuses_count", 0)),
-        "verified": info.get("verified", info.get("is_verified", False)),
+        "display_name": info.get("name", username),
+        "followers": info.get("followers", 0),
+        "following": info.get("following", 0),
+        "tweets_count": info.get("statusesCount", 0),
+        "verified": info.get("isBlueVerified", info.get("isVerified", False)),
+        "location": info.get("location", ""),
+        "description": (info.get("description", "") or "")[:200],
         "latest_tweets": latest_tweets,
     }
 
@@ -185,19 +190,31 @@ async def run_pipeline(config: dict) -> DailyReport:
     
     api = TwitterAPIIO(api_key)
     report.source = "twitterapi.io"
+    delay = config.get("rate_limit_delay", 6.0)
     
     try:
         # ── Trending Global ──
         try:
-            raw_trends = await api.get_trends()
+            raw_trends = await api.get_trends(config["woeid_global"])
             report.trends_global = extract_trends(raw_trends, config["max_trends"])
+            await asyncio.sleep(delay)
         except Exception as e:
             report.errors.append(f"trends_global: {e}")
+        
+        # ── Trending Brasil ──
+        try:
+            raw_trends_br = await api.get_trends(config["woeid_brazil"])
+            report.trends_brazil = extract_trends(raw_trends_br, config["max_trends"])
+            await asyncio.sleep(delay)
+        except Exception as e:
+            report.errors.append(f"trends_brazil: {e}")
         
         # ── Monitor Users ──
         for username in config["monitor_users"]:
             try:
+                await asyncio.sleep(delay)
                 info = await api.get_user_info(username)
+                await asyncio.sleep(delay)
                 tweets = await api.get_user_tweets(username, config["max_tweets_per_user"])
                 report.users[username] = extract_user_snapshot(username, info, tweets)
             except Exception as e:
@@ -247,8 +264,14 @@ def format_markdown(report: DailyReport) -> str:
     if report.trends_global:
         lines.append("*🔥 Trending Global:*")
         for i, t in enumerate(report.trends_global[:5], 1):
-            vol = f"{t['tweet_volume']:,}" if t['tweet_volume'] else "?"
-            lines.append(f"  {i}\\. {t['name']} \\({vol} tweets\\)")
+            lines.append(f"  {i}\\. {t['name']}")
+        lines.append("")
+    
+    # Trending Brasil
+    if report.trends_brazil:
+        lines.append("*🇧🇷 Trending Brasil:*")
+        for i, t in enumerate(report.trends_brazil[:5], 1):
+            lines.append(f"  {i}\\. {t['name']}")
         lines.append("")
     
     # Users
