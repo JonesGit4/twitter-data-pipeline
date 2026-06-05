@@ -24,7 +24,7 @@ import httpx
 # ============================================================
 
 CONFIG = {
-    "twitterapi_key": os.getenv("TWITTERAPI_IO_KEY", "new1_6deba88d9fa94d4d9e01d6fca78fe035"),
+    "twitterapi_key": os.getenv("TWITTERAPI_IO_KEY", ""),
     "output_dir": os.path.expanduser("~/.hermes/data/twitter"),
     "woeid_global": 1,
     "woeid_brazil": 455827,

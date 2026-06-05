@@ -1,0 +1,17 @@
+# Data (reports diários)
+data/
+
+# Credenciais
+accounts.json
+.env
+
+# Python
+__pycache__/
+*.pyc
+
+# IDE
+.vscode/
+.idea/
+
+# twscrape
+*.db
