@@ -1,0 +1,23 @@
+{
+  "accounts": [
+    {
+      "username": "conta1",
+      "password": "senha1",
+      "email": "email1@example.com",
+      "email_password": "senha_email1"
+    },
+    {
+      "username": "conta2",
+      "password": "senha2",
+      "email": "email2@example.com",
+      "email_password": "senha_email2"
+    },
+    {
+      "username": "conta3",
+      "password": "senha3",
+      "email": "email3@example.com",
+      "email_password": "senha_email3"
+    }
+  ],
+  "_instructions": "Preencha com as 3 contas descartaveis do X/Twitter. Execute: python3 setup_twscrape.py accounts.json"
+}
